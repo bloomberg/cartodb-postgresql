@@ -1300,3 +1300,110 @@ BEGIN
   RETURN (destschema || '.' || destname)::regclass;
 END;
 $$ LANGUAGE 'plpgsql';
+
+
+CREATE OR REPLACE FUNCTION CDB_CartodbfyView(reloid REGCLASS)
+RETURNS REGCLASS
+AS $$
+DECLARE
+
+  column_select_stmt text;
+  orig_column_select_stmt text;
+
+  view_definition text;
+  view_redefinition text;
+
+  reloid_parts text[];
+  schema_name text;
+  view_name text;
+
+BEGIN
+
+  reloid_parts := string_to_array(reloid::text, '.');
+  schema_name := regexp_replace(reloid_parts[1], '"', '', 'g');
+  view_name := reloid_parts[2];
+
+  -- Examine original column list to build cartodbified view
+  DROP TABLE IF EXISTS temp_view_columns;
+  CREATE TEMP TABLE temp_view_columns(
+    column_name text NOT NULL,
+    type_name text NOT NULL
+  );
+
+  INSERT INTO temp_view_columns (column_name, type_name)
+    SELECT
+      a.attname AS column_name,
+      pg_catalog.format_type(a.atttypid, a.atttypmod) AS type_name
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attnum > 0
+      AND NOT a.attisdropped
+      AND a.attrelid = reloid
+      AND a.attname NOT IN('cartodb_id');
+
+  -- Ensure the_geom is specified
+  IF NOT EXISTS(SELECT 1 FROM temp_view_columns
+                WHERE column_name = 'the_geom'
+                  AND type_name = 'geometry(Geometry,4326)')
+  THEN
+    RAISE EXCEPTION 'View ''%'' must specify a column ''the_geom'' of type ''geometry(Geomtery,4326)', reloid::text;
+  END IF;
+
+  -- Add cartodb_id column gauranteed to be unique
+  column_select_stmt := 'row_number() OVER (ORDER BY 1) AS cartodb_id';
+
+  -- Add the_geom_webmercator column if one does not exist
+  IF NOT EXISTS(SELECT 1 FROM temp_view_columns
+                WHERE column_name = 'the_geom_webmercator'
+                  AND type_name = 'geometry(Geometry,3857)')
+  THEN
+    column_select_stmt := column_select_stmt || E'\n' ||
+      ',public.CDB_TransformToWebmercator(q.the_geom) AS the_geom_webmercator';
+
+    SELECT string_agg('q.' || quote_ident(column_name), E'\n,')
+    INTO orig_column_select_stmt
+    FROM temp_view_columns
+    WHERE column_name <> 'the_geom_webmercator';
+  ELSE
+    SELECT string_agg(quote_ident(column_name), E'\n,')
+    INTO orig_column_select_stmt
+    FROM temp_view_columns;
+  END IF;
+
+  IF orig_column_select_stmt <> ''
+  THEN
+    column_select_stmt := column_select_stmt || E'\n,' ||
+      orig_column_select_stmt;
+  END IF;
+
+  -- Pull original view definition to refer to in subquery
+  SELECT trim(trailing '; ' from definition)
+  INTO view_definition
+  FROM pg_catalog.pg_views
+  WHERE schemaname = schema_name
+    AND viewname = view_name;
+
+  IF view_definition IS NULL OR view_definition = ''
+  THEN
+    RAISE EXCEPTION 'No view definition found for %', reloid::text;
+  END IF;
+
+  -- Redefine view with cartodb_id and the_geom_webmercator columns
+  view_redefinition := FORMAT($q$
+
+      DROP VIEW IF EXISTS %s ;
+
+      CREATE VIEW %s AS
+        SELECT
+          %s
+        FROM (
+          %s
+        ) q;
+
+  $q$::text, reloid::text, reloid::text, column_select_stmt, view_definition);
+
+  PERFORM _CDB_SQL(view_redefinition, 'CDB_CartodbfyView');
+  RETURN (quote_ident(schema_name) || '.' || quote_ident(view_name))::regclass;
+
+END;
+$$ LANGUAGE 'plpgsql';
+
