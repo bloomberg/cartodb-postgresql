@@ -1302,7 +1302,7 @@ END;
 $$ LANGUAGE 'plpgsql';
 
 
-CREATE OR REPLACE FUNCTION CDB_CartodbfyView(reloid REGCLASS)
+CREATE OR REPLACE FUNCTION CDB_CartodbfyView(destschema TEXT, reloid REGCLASS)
 RETURNS REGCLASS
 AS $$
 DECLARE
@@ -1313,15 +1313,38 @@ DECLARE
   view_definition text;
   view_redefinition text;
 
-  reloid_parts text[];
-  schema_name text;
-  view_name text;
+  relname text;
+  relschema text;
+
+  destoid regclass;
+  destname text;
+
+  rec record;
 
 BEGIN
 
-  reloid_parts := string_to_array(reloid::text, '.');
-  schema_name := regexp_replace(reloid_parts[1], '"', '', 'g');
-  view_name := reloid_parts[2];
+  -- Save the raw schema/view names for later
+  SELECT n.nspname, c.relname, c.relname
+  INTO STRICT relschema, relname, destname
+  FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+  WHERE c.oid = reloid;
+
+  PERFORM cartodb._CDB_check_prerequisites(destschema, reloid);
+
+  -- Check destination schema exists
+  -- Throws an exception if there is no matching schema
+  IF destschema IS NOT NULL THEN
+
+    SELECT n.nspname
+    INTO rec FROM pg_namespace n WHERE n.nspname = destschema;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Schema ''%'' does not exist', destschema;
+    END IF;
+
+  ELSE
+    destschema := relschema;
+  END IF;
+
 
   -- Examine original column list to build cartodbified view
   DROP TABLE IF EXISTS temp_view_columns;
@@ -1379,8 +1402,8 @@ BEGIN
   SELECT trim(trailing '; ' from definition)
   INTO view_definition
   FROM pg_catalog.pg_views
-  WHERE schemaname = schema_name
-    AND viewname = view_name;
+  WHERE schemaname = destschema
+    AND viewname = destname;
 
   IF view_definition IS NULL OR view_definition = ''
   THEN
@@ -1402,7 +1425,7 @@ BEGIN
   $q$::text, reloid::text, reloid::text, column_select_stmt, view_definition);
 
   PERFORM _CDB_SQL(view_redefinition, 'CDB_CartodbfyView');
-  RETURN (quote_ident(schema_name) || '.' || quote_ident(view_name))::regclass;
+  RETURN (quote_ident(destschema) || '.' || quote_ident(destname))::regclass;
 
 END;
 $$ LANGUAGE 'plpgsql';
