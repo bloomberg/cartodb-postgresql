@@ -180,11 +180,7 @@ function setup_database() {
     sql "CREATE EXTENSION plpythonu;"
 
     log_info "########################### BOOTSTRAP ###########################"
-    ${CMD} -d ${DATABASE} -f scripts-available/CDB_Organizations.sql
-    ${CMD} -d ${DATABASE} -f scripts-available/CDB_OverviewsSupport.sql
-    ${CMD} -d ${DATABASE} -f scripts-available/CDB_AnalysisSupport.sql
-    # trick to allow forcing a schema when loading SQL files (see: http://bit.ly/1HeLnhL)
-    ${CMD} -d ${DATABASE} -f test/extension/run_at_cartodb_schema.sql
+    sql "CREATE EXTENSION cartodb;"
 }
 
 function setup() {
