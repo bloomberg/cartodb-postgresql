@@ -414,6 +414,96 @@ function test_cdb_tablemetadata_text() {
 
 }
 
+function test_cdb_tablemetadata_dependent_views() {
+
+    # Setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.CDB_SetUserQuotaInBytes('cdb_testmember_1', 1000000000);"
+    # Create cartodbified tables and some views which
+    # depend on them
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_a (id int);"
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_b (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_a'::regclass);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_b'::regclass);"
+
+
+    # Dependents of some_table_a
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_a AS
+            SELECT * FROM cdb_testmember_1.some_table_a;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_a AS
+            SELECT * FROM cdb_testmember_1.direct_dep_view_a;"
+
+    # Dependents of some_table_b
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_b AS
+            SELECT * FROM cdb_testmember_1.some_table_b;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_b AS
+            SELECT * FROM cdb_testmember_1.direct_dep_view_b;"
+
+    # Dependents of both tables
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_both AS
+            SELECT a.* FROM cdb_testmember_1.some_table_a a
+            JOIN cdb_testmember_1.some_table_b b on b.id = a.id;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_both AS
+            SELECT a.* FROM cdb_testmember_1.indirect_dep_view_a a
+            JOIN cdb_testmember_1.indirect_dep_view_b b on b.id = a.id;"
+
+
+    # Query dependents of table a
+    sql cdb_testmember_1 "
+        SELECT
+          string_agg(DISTINCT dependent_name, '|' ORDER BY dependent_name)
+        FROM cartodb.CDB_TableMetadata_DependentViews(
+          ARRAY[
+            /* Include results from both to ensure correct filtering on base_dependency_name */
+            'cdb_testmember_1.some_table_a'::regclass,
+            'cdb_testmember_1.some_table_b'::regclass
+          ]::regclass[]
+        ) as dv(
+          dependent_oid oid,        -- oid of dependent view
+          dependency_oid oid,       -- oid of direct dependent of dependent view
+          base_dependency_oid oid,  -- oid of original table dependency of dependent view
+          dependent_name text,      -- name of dependent view
+          dependency_name text,     -- name of direct dependent of dependent view
+          base_dependency_name text -- name of original table dependency of dependent view
+        )
+        WHERE dv.base_dependency_name = 'cdb_testmember_1.some_table_a'
+    " should "cdb_testmember_1.direct_dep_view_a|cdb_testmember_1.direct_dep_view_both|cdb_testmember_1.indirect_dep_view_a|cdb_testmember_1.indirect_dep_view_both"
+
+    # Query dependents of table b
+    sql cdb_testmember_1 "
+        SELECT
+          string_agg(DISTINCT dependent_name, '|' ORDER BY dependent_name)
+        FROM cartodb.CDB_TableMetadata_DependentViews(
+          ARRAY[
+            /* Include results from both to ensure correct filtering on base_dependency_name */
+            'cdb_testmember_1.some_table_a'::regclass,
+            'cdb_testmember_1.some_table_b'::regclass
+          ]::regclass[]
+        ) as dv(
+          dependent_oid oid,        -- oid of dependent view
+          dependency_oid oid,       -- oid of direct dependent of dependent view
+          base_dependency_oid oid,  -- oid of original table dependency of dependent view
+          dependent_name text,      -- name of dependent view
+          dependency_name text,     -- name of direct dependent of dependent view
+          base_dependency_name text -- name of original table dependency of dependent view
+        )
+        WHERE dv.base_dependency_name = 'cdb_testmember_1.some_table_b'
+    " should "cdb_testmember_1.direct_dep_view_b|cdb_testmember_1.direct_dep_view_both|cdb_testmember_1.indirect_dep_view_b|cdb_testmember_1.indirect_dep_view_both"
+
+
+    # Cleanup
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_both;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_both;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_b;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_b;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_a;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_a;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_b;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_a;"
+
+}
+
 function test_cdb_column_names() {
     sql cdb_testmember_1 'CREATE TABLE cdb_testmember_1.table_cnames(c int, a int, r int, t int, o int);'
     sql cdb_testmember_2 'CREATE TABLE cdb_testmember_2.table_cnames(d int, b int);'
