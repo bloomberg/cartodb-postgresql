@@ -99,6 +99,9 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER;
 -- Trigger logging updated_at in the CDB_TableMetadata
 -- and notifying cdb_tabledata_update with table name as payload.
 --
+-- This maintains the update timestamps for the table to which
+-- it is attached as well as any views which reference the table.
+--
 -- Attach to tables like this:
 --
 --   CREATE trigger track_updates
@@ -125,13 +128,30 @@ BEGIN
 
   WITH nv as (
     SELECT TG_RELID as tabname, NOW() as t
+  ), all_dependents as (
+    SELECT nv.tabname, nv.t
+    FROM nv
+    UNION
+    SELECT
+      dv.dependent_oid as tabname,
+      nv.t
+    FROM nv, public.CDB_TableMetadata_DependentViews(
+      array[nv.tabname::regclass]
+    ) as dv(
+        dependent_oid oid,
+        dependency_oid oid,
+        base_dependency_oid oid,
+        dependent_name text,
+        dependency_name text,
+        base_dependency_name text
+      )
   ), updated as (
-    UPDATE public.CDB_TableMetadata x SET updated_at = nv.t
-    FROM nv WHERE x.tabname = nv.tabname
+    UPDATE public.CDB_TableMetadata x SET updated_at = ad.t
+    FROM all_dependents ad WHERE x.tabname = ad.tabname
     RETURNING x.tabname
   )
-  INSERT INTO public.CDB_TableMetadata SELECT nv.*
-  FROM nv LEFT JOIN updated USING(tabname)
+  INSERT INTO public.CDB_TableMetadata SELECT ad.*
+  FROM all_dependents ad LEFT JOIN updated USING(tabname)
   WHERE updated.tabname IS NULL;
 
   RETURN NULL;

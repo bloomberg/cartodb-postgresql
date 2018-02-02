@@ -384,6 +384,105 @@ function test_cdb_tablemetadatatouch_fully_qualifies_names() {
     sql postgres 'DROP TABLE touch_invalidations'
 }
 
+function test_cdb_tablemetadata_trigger_dependent_views() {
+
+    #setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.CDB_SetUserQuotaInBytes('cdb_testmember_1', 1000000000);"
+    #create cartodbified tables and some views which
+    #depend on them
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_a (id int);"
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_b (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_a'::regclass);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_b'::regclass);"
+
+
+    #dependents of some_table_a
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_a AS
+            SELECT * FROM cdb_testmember_1.some_table_a;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_a AS
+            SELECT * FROM cdb_testmember_1.direct_dep_view_a;"
+
+    #dependents of some_table_b
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_b AS
+            SELECT * FROM cdb_testmember_1.some_table_b;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_b AS
+            SELECT * FROM cdb_testmember_1.direct_dep_view_b;"
+
+    #dependents of both tables
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_both AS
+            SELECT a.* FROM cdb_testmember_1.some_table_a a
+            JOIN cdb_testmember_1.some_table_b b on b.id = a.id;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_both AS
+            SELECT a.* FROM cdb_testmember_1.indirect_dep_view_a a
+            JOIN cdb_testmember_1.indirect_dep_view_b b on b.id = a.id;"
+
+
+    #clean up old touches
+    sql postgres "DELETE FROM cdb_tablemetadata;"
+    sql postgres "SELECT COUNT(1) FROM cdb_tablemetadata_text;" should "0"
+
+    #touch table a
+    sql postgres "INSERT INTO cdb_testmember_1.some_table_a (id) VALUES (1);"
+
+    #ensure dependents have exactly the same updated timestamps as base table
+    sql postgres "SELECT v.* FROM cartodb.cdb_tablemetadata_text v
+                  LEFT JOIN cartodb.cdb_tablemetadata_text t
+                      ON t.tabname = 'cdb_testmember_1.some_table_a'
+                  WHERE v.tabname IN('cdb_testmember_1.indirect_dep_view_both',
+                                     'cdb_testmember_1.direct_dep_view_both',
+                                     'cdb_testmember_1.indirect_dep_view_a',
+                                     'cdb_testmember_1.direct_dep_view_a')
+                    -- timestamps are not equal
+                    AND ((t.updated_at IS NOT NULL AND v.updated_at IS NULL)
+                      OR (v.updated_at IS NOT NULL AND t.updated_at IS NULL)
+                      OR (v.updated_at <> t.updated_at));" should ""
+
+    #touch table b
+    sql postgres "INSERT INTO cdb_testmember_1.some_table_b (id) VALUES (1);"
+
+    #ensure dependents have exactly the same updated timestamps as base table
+    sql postgres "SELECT v.* FROM cartodb.cdb_tablemetadata_text v
+                  LEFT JOIN cartodb.cdb_tablemetadata_text t
+                      ON t.tabname = 'cdb_testmember_1.some_table_b'
+                  WHERE v.tabname IN('cdb_testmember_1.indirect_dep_view_both',
+                                     'cdb_testmember_1.direct_dep_view_both',
+                                     'cdb_testmember_1.indirect_dep_view_b',
+                                     'cdb_testmember_1.direct_dep_view_b')
+                    -- timestamps are not equal
+                    AND ((t.updated_at IS NOT NULL AND v.updated_at IS NULL)
+                      OR (v.updated_at IS NOT NULL AND t.updated_at IS NULL)
+                      OR (v.updated_at <> t.updated_at));" should ""
+
+    #ensure views and tables exist in cdb_tablemetadata_text
+    sql postgres "SELECT COUNT(DISTINCT tabname) FROM cdb_tablemetadata_text
+                  WHERE tabname IN('cdb_testmember_1.indirect_dep_view_both',
+                                   'cdb_testmember_1.direct_dep_view_both',
+                                   'cdb_testmember_1.indirect_dep_view_b',
+                                   'cdb_testmember_1.direct_dep_view_b',
+                                   'cdb_testmember_1.indirect_dep_view_a',
+                                   'cdb_testmember_1.direct_dep_view_a',
+                                   'cdb_testmember_1.some_table_a',
+                                   'cdb_testmember_1.some_table_b');" should "8"
+
+    #ensure views and tables have exactly one record
+    sql postgres "SELECT COUNT(1) FROM (SELECT 1 FROM cdb_tablemetadata_text
+                  GROUP BY tabname HAVING COUNT(1) > 1) s;" should "0"
+
+    #cleanup
+    sql postgres "DELETE FROM cdb_tablemetadata;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_both;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_both;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_b;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_b;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_a;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_a;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_b;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_a;"
+
+}
+
 function test_cdb_tablemetadata_text() {
 
     #create and touch tables
