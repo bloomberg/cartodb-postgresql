@@ -23,21 +23,20 @@ CREATE OR REPLACE VIEW public.CDB_TableMetadata_Text AS
 -- CDB_TableMetadata:
 --
 --  SELECT DISTINCT dependent_oid::regclass, dependent_name
---  FROM CDB_TableMetadata_DependentViews(
---    '{a,b,c}'::regclass[]
---  ) as dv(
---    dependent_oid oid,        -- oid of dependent view
---    dependency_oid oid,       -- oid of direct dependent of dependent view
---    base_dependency_oid oid,  -- oid of original table dependency of dependent view
---    dependent_name text,      -- name of dependent view
---    dependency_name text,     -- name of direct dependent of dependent view
---    base_dependency_name text -- name of original table dependency of dependent view
---  )
---  WHERE dv.base_dependency = 'a':regclass;
+--  FROM CDB_TableMetadata_DependentViews('{a,b,c}'::regclass[])
+--  WHERE base_dependency = 'a':regclass;
 --
 
 CREATE OR REPLACE FUNCTION public.CDB_TableMetadata_DependentViews(table_names regclass[])
-RETURNS SETOF record AS
+RETURNS TABLE (
+  dependent_oid oid,        -- oid of dependent view
+  dependency_oid oid,       -- oid of direct dependent of dependent view
+  base_dependency_oid oid,  -- oid of original table dependency of dependent view
+  dependent_name text,      -- name of dependent view
+  dependency_name text,     -- name of direct dependent of dependent view
+  base_dependency_name text -- name of original table dependency of dependent view
+)
+AS
 $$
 BEGIN
 
@@ -83,13 +82,13 @@ BEGIN
     WHERE v.oid <> dv.dependent_oid
   )
   SELECT
-    dependent_oid,
-    dependency_oid,
-    base_dependency_oid,
-    dependent_name,
-    dependency_name,
-    base_dependency_name
-  FROM dependent_views;
+    dv.dependent_oid,
+    dv.dependency_oid,
+    dv.base_dependency_oid,
+    dv.dependent_name,
+    dv.dependency_name,
+    dv.base_dependency_name
+  FROM dependent_views dv;
 
 END;
 $$
@@ -135,16 +134,7 @@ BEGIN
     SELECT
       dv.dependent_oid as tabname,
       nv.t
-    FROM nv, public.CDB_TableMetadata_DependentViews(
-      array[nv.tabname::regclass]
-    ) as dv(
-        dependent_oid oid,
-        dependency_oid oid,
-        base_dependency_oid oid,
-        dependent_name text,
-        dependency_name text,
-        base_dependency_name text
-      )
+    FROM nv, public.CDB_TableMetadata_DependentViews(ARRAY[nv.tabname::regclass]) dv
   ), updated as (
     UPDATE public.CDB_TableMetadata x SET updated_at = ad.t
     FROM all_dependents ad WHERE x.tabname = ad.tabname

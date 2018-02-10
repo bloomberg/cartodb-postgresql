@@ -558,14 +558,7 @@ function test_cdb_tablemetadata_dependent_views() {
             'cdb_testmember_1.some_table_a'::regclass,
             'cdb_testmember_1.some_table_b'::regclass
           ]::regclass[]
-        ) as dv(
-          dependent_oid oid,        -- oid of dependent view
-          dependency_oid oid,       -- oid of direct dependent of dependent view
-          base_dependency_oid oid,  -- oid of original table dependency of dependent view
-          dependent_name text,      -- name of dependent view
-          dependency_name text,     -- name of direct dependent of dependent view
-          base_dependency_name text -- name of original table dependency of dependent view
-        )
+        ) dv
         WHERE dv.base_dependency_name = 'cdb_testmember_1.some_table_a'
     " should "cdb_testmember_1.direct_dep_view_a|cdb_testmember_1.direct_dep_view_both|cdb_testmember_1.indirect_dep_view_a|cdb_testmember_1.indirect_dep_view_both"
 
@@ -579,14 +572,7 @@ function test_cdb_tablemetadata_dependent_views() {
             'cdb_testmember_1.some_table_a'::regclass,
             'cdb_testmember_1.some_table_b'::regclass
           ]::regclass[]
-        ) as dv(
-          dependent_oid oid,        -- oid of dependent view
-          dependency_oid oid,       -- oid of direct dependent of dependent view
-          base_dependency_oid oid,  -- oid of original table dependency of dependent view
-          dependent_name text,      -- name of dependent view
-          dependency_name text,     -- name of direct dependent of dependent view
-          base_dependency_name text -- name of original table dependency of dependent view
-        )
+        ) dv
         WHERE dv.base_dependency_name = 'cdb_testmember_1.some_table_b'
     " should "cdb_testmember_1.direct_dep_view_b|cdb_testmember_1.direct_dep_view_both|cdb_testmember_1.indirect_dep_view_b|cdb_testmember_1.indirect_dep_view_both"
 
