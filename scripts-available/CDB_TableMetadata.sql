@@ -81,7 +81,7 @@ BEGIN
     -- Ignore self dependencies
     WHERE v.oid <> dv.dependent_oid
   )
-  SELECT
+  SELECT DISTINCT
     dv.dependent_oid,
     dv.dependency_oid,
     dv.base_dependency_oid,
