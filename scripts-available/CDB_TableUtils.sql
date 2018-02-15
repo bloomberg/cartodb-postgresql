@@ -49,10 +49,10 @@ BEGIN
 
     -- Generate insert select stmt
     EXECUTE FORMAT($q$
-      INSERT INTO %I.%I
+      INSERT INTO %I.%I ( %s )
         SELECT %s
         FROM %I
-    $q$, schema_name, dest_table_name, column_list, source_table_name);
+    $q$, schema_name, dest_table_name, column_list, column_list, source_table_name);
 
     -- 4. Drop source table
     EXECUTE FORMAT('DROP TABLE %I', source_table_name);
