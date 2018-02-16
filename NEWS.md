@@ -1,3 +1,14 @@
+0.18.6 (2018-02-15)
+
+* Support user datasets stored as views instead of tables
+  * Ability to cartodbfy views with new `CDB_CartodbfyView` function
+  * Register views depending on tables in `CDB_TableMetadata` with
+    `CDB_TableMetadata_DependentViews`, `CDB_TableMetadata_Trigger`
+    functions
+  * Enable synchronizations of tables referenced by views without
+    dropping them with `CDB_TableUtils_ReplaceTableContents`
+* Fix erroneous timestamps in `CDB_TableMetadata_Text`
+
 0.18.5 (2016-11-30)
 
 * Add to new overview creation strategies #290

@@ -14,9 +14,92 @@ CREATE OR REPLACE VIEW public.CDB_TableMetadata_Text AS
 -- Updates are only possible trough the security definer trigger
 -- GRANT SELECT ON public.CDB_TableMetadata TO public;
 
+
+--
+-- Get all views which depend, directly or indirectly, on the
+-- specified table_names. This is useful for determining e.g.
+-- the views in a user database which depend on user tables
+-- in order to maintain updated timestamps for such views in
+-- CDB_TableMetadata:
+--
+--  SELECT DISTINCT dependent_oid::regclass, dependent_name
+--  FROM CDB_TableMetadata_DependentViews('{a,b,c}'::regclass[])
+--  WHERE base_dependency = 'a':regclass;
+--
+
+CREATE OR REPLACE FUNCTION public.CDB_TableMetadata_DependentViews(table_names regclass[])
+RETURNS TABLE (
+  dependent_oid oid,        -- oid of dependent view
+  dependency_oid oid,       -- oid of direct dependent of dependent view
+  base_dependency_oid oid,  -- oid of original table dependency of dependent view
+  dependent_name text,      -- name of dependent view
+  dependency_name text,     -- name of direct dependent of dependent view
+  base_dependency_name text -- name of original table dependency of dependent view
+)
+AS
+$$
+BEGIN
+
+  RETURN QUERY
+  WITH RECURSIVE dependent_views AS (
+    -- Direct dependent views of tables
+    SELECT
+      v.oid as dependent_oid,
+      t.oid as dependency_oid,
+      t.oid as base_dependency_oid,
+      v.oid::regclass::text as dependent_name,
+      t.oid::regclass::text as dependency_name,
+      t.oid::regclass::text as base_dependency_name
+    FROM pg_depend d
+    JOIN pg_class t
+      ON t.oid = d.refobjid
+      AND t.oid::regclass = ANY(table_names)
+    JOIN pg_rewrite rw
+      ON rw.oid = d.objid
+    JOIN pg_class v
+      ON rw.ev_class = v.oid
+    -- Ignore self dependencies
+    WHERE v.oid <> t.oid
+
+    UNION ALL
+
+    -- Dependent views of dependent views
+    SELECT
+      v.oid as dependent_oid,
+      dv.dependent_oid as dependency_oid,
+      dv.base_dependency_oid as base_dependency_oid,
+      v.oid::regclass::text as dependent_name,
+      dv.dependent_oid::regclass::text as dependency_name,
+      dv.base_dependency_oid::regclass::text as base_dependency_name
+    FROM pg_depend d
+    JOIN dependent_views dv
+      ON dv.dependent_oid = d.refobjid
+    JOIN pg_rewrite rw
+      ON rw.oid = d.objid
+    JOIN pg_class v
+      ON rw.ev_class = v.oid
+    -- Ignore self dependencies
+    WHERE v.oid <> dv.dependent_oid
+  )
+  SELECT DISTINCT
+    dv.dependent_oid,
+    dv.dependency_oid,
+    dv.base_dependency_oid,
+    dv.dependent_name,
+    dv.dependency_name,
+    dv.base_dependency_name
+  FROM dependent_views dv;
+
+END;
+$$
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER;
+
 --
 -- Trigger logging updated_at in the CDB_TableMetadata
 -- and notifying cdb_tabledata_update with table name as payload.
+--
+-- This maintains the update timestamps for the table to which
+-- it is attached as well as any views which reference the table.
 --
 -- Attach to tables like this:
 --
@@ -44,13 +127,21 @@ BEGIN
 
   WITH nv as (
     SELECT TG_RELID as tabname, NOW() as t
+  ), all_dependents as (
+    SELECT nv.tabname, nv.t
+    FROM nv
+    UNION
+    SELECT
+      dv.dependent_oid as tabname,
+      nv.t
+    FROM nv, public.CDB_TableMetadata_DependentViews(ARRAY[nv.tabname::regclass]) dv
   ), updated as (
-    UPDATE public.CDB_TableMetadata x SET updated_at = nv.t
-    FROM nv WHERE x.tabname = nv.tabname
+    UPDATE public.CDB_TableMetadata x SET updated_at = ad.t
+    FROM all_dependents ad WHERE x.tabname = ad.tabname
     RETURNING x.tabname
   )
-  INSERT INTO public.CDB_TableMetadata SELECT nv.*
-  FROM nv LEFT JOIN updated USING(tabname)
+  INSERT INTO public.CDB_TableMetadata SELECT ad.*
+  FROM all_dependents ad LEFT JOIN updated USING(tabname)
   WHERE updated.tabname IS NULL;
 
   RETURN NULL;
