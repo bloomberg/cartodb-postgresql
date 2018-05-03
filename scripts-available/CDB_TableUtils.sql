@@ -44,6 +44,13 @@ BEGIN
       AND NOT a.attisdropped
       AND a.attrelid = dest_table::oid;
 
+    -- Disable row-wise quota check trigger for update
+    EXECUTE FORMAT(
+      'ALTER TABLE %I.%I DISABLE TRIGGER test_quota_per_row',
+      schema_name,
+      dest_table_name
+    );
+
     -- Truncate table
     EXECUTE FORMAT('TRUNCATE TABLE %I.%I', schema_name, dest_table_name);
 
@@ -53,6 +60,13 @@ BEGIN
         SELECT %s
         FROM %I
     $q$, schema_name, dest_table_name, column_list, column_list, source_table_name);
+
+    -- Reenable row-wise quota check trigger for normal behavior
+    EXECUTE FORMAT(
+      'ALTER TABLE %I.%I ENABLE TRIGGER test_quota_per_row',
+      schema_name,
+      dest_table_name
+    );
 
     -- 4. Drop source table
     EXECUTE FORMAT('DROP TABLE %I', source_table_name);
