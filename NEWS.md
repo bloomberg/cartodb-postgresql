@@ -1,3 +1,9 @@
+0.18.7 (2018-05-07)
+
+* Add flag to disable `test_quota_per_row` trigger in
+  `CDB_TableUtils_ReplaceTableContents` to prevent
+  potential deadlock
+
 0.18.6 (2018-02-15)
 
 * Support user datasets stored as views instead of tables
