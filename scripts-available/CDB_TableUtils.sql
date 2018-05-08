@@ -9,10 +9,11 @@
 -- has dependent objects.
 --
 CREATE OR REPLACE FUNCTION public.CDB_TableUtils_ReplaceTableContents(
-  schema_name text,       -- name of destination schema
-  dest_table_name text,   -- name of existing
-  source_table_name text, -- fully qualified source table
-  swap_table_name text    -- temporary table to use for swapping
+  schema_name text,                   -- name of destination schema
+  dest_table_name text,               -- name of existing
+  source_table_name text,             -- fully qualified source table
+  swap_table_name text,               -- temporary table to use for swapping
+  disable_test_quota_per_row boolean  -- Disable per row quota check
 )
 RETURNS void
 AS $$
@@ -44,6 +45,16 @@ BEGIN
       AND NOT a.attisdropped
       AND a.attrelid = dest_table::oid;
 
+    IF disable_test_quota_per_row
+    THEN
+      -- Disable row-wise quota check trigger for update
+      EXECUTE FORMAT(
+        'ALTER TABLE %I.%I DISABLE TRIGGER test_quota_per_row',
+        schema_name,
+        dest_table_name
+      );
+    END IF;
+
     -- Truncate table
     EXECUTE FORMAT('TRUNCATE TABLE %I.%I', schema_name, dest_table_name);
 
@@ -54,7 +65,17 @@ BEGIN
         FROM %I
     $q$, schema_name, dest_table_name, column_list, column_list, source_table_name);
 
-    -- 4. Drop source table
+    IF disable_test_quota_per_row
+    THEN
+      -- Reenable row-wise quota check trigger for normal behavior
+      EXECUTE FORMAT(
+        'ALTER TABLE %I.%I ENABLE TRIGGER test_quota_per_row',
+        schema_name,
+        dest_table_name
+      );
+    END IF;
+
+    -- Drop source table
     EXECUTE FORMAT('DROP TABLE %I', source_table_name);
   ELSE
     -- The table is safe to replace with the source
@@ -71,6 +92,29 @@ BEGIN
         schema_name, source_table_name, dest_table_name);
   END IF;
 
+END;
+$$ LANGUAGE plpgsql;
+
+--
+--  Overload of public.CDB_TableUtils_ReplaceTableContents(text, text, text, text, boolean)
+--  enabling per row quota check.
+--
+CREATE OR REPLACE FUNCTION public.CDB_TableUtils_ReplaceTableContents(
+  schema_name text,       -- name of destination schema
+  dest_table_name text,   -- name of existing
+  source_table_name text, -- fully qualified source table
+  swap_table_name text    -- temporary table to use for swapping
+)
+RETURNS void
+AS $$
+BEGIN
+  EXECUTE public.CDB_TableUtils_ReplaceTableContents(
+    schema_name,
+    dest_table_name,
+    source_table_name,
+    swap_table_name,
+    false
+  );
 END;
 $$ LANGUAGE plpgsql;
 
