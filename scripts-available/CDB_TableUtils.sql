@@ -8,12 +8,13 @@
 -- when dropping the table is not possible because e.g. the table
 -- has dependent objects.
 --
+DROP FUNCTION IF EXISTS public.CDB_TableUtils_ReplaceTableContents(text,text,text,text,boolean);
 CREATE OR REPLACE FUNCTION public.CDB_TableUtils_ReplaceTableContents(
-  schema_name text,                   -- name of destination schema
-  dest_table_name text,               -- name of existing
-  source_table_name text,             -- fully qualified source table
-  swap_table_name text,               -- temporary table to use for swapping
-  disable_test_quota_per_row boolean  -- Disable per row quota check
+  schema_name text,             -- name of destination schema
+  dest_table_name text,         -- name of existing
+  source_table_name text,       -- fully qualified source table
+  swap_table_name text,         -- temporary table to use for swapping
+  disable_quota_checks boolean  -- Disable quota check
 )
 RETURNS void
 AS $$
@@ -45,11 +46,17 @@ BEGIN
       AND NOT a.attisdropped
       AND a.attrelid = dest_table::oid;
 
-    IF disable_test_quota_per_row
+    IF disable_quota_checks
     THEN
-      -- Disable row-wise quota check trigger for update
+      -- Disable per row quota check trigger for update
       EXECUTE FORMAT(
         'ALTER TABLE %I.%I DISABLE TRIGGER test_quota_per_row',
+        schema_name,
+        dest_table_name
+      );
+      -- Disable per statement quota check trigger for update
+      EXECUTE FORMAT(
+        'ALTER TABLE %I.%I DISABLE TRIGGER test_quota',
         schema_name,
         dest_table_name
       );
@@ -65,11 +72,17 @@ BEGIN
         FROM %I
     $q$, schema_name, dest_table_name, column_list, column_list, source_table_name);
 
-    IF disable_test_quota_per_row
+    IF disable_quota_checks
     THEN
-      -- Reenable row-wise quota check trigger for normal behavior
+      -- Reenable per row quota check trigger for normal behavior
       EXECUTE FORMAT(
         'ALTER TABLE %I.%I ENABLE TRIGGER test_quota_per_row',
+        schema_name,
+        dest_table_name
+      );
+      -- Reenable per statement quota check trigger for normal behavior
+      EXECUTE FORMAT(
+        'ALTER TABLE %I.%I ENABLE TRIGGER test_quota',
         schema_name,
         dest_table_name
       );
@@ -97,7 +110,7 @@ $$ LANGUAGE plpgsql;
 
 --
 --  Overload of public.CDB_TableUtils_ReplaceTableContents(text, text, text, text, boolean)
---  enabling per row quota check.
+--  enabling quota checks.
 --
 CREATE OR REPLACE FUNCTION public.CDB_TableUtils_ReplaceTableContents(
   schema_name text,       -- name of destination schema
