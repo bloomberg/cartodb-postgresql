@@ -1,3 +1,8 @@
+0.18.8 (2018-06-25)
+
+* Support disabling all quota checks in
+  `CDB_TableUtils_ReplaceTableContents`
+
 0.18.7 (2018-05-07)
 
 * Add flag to disable `test_quota_per_row` trigger in
