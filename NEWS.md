@@ -1,3 +1,8 @@
+0.18.9 (2019-01-14)
+
+* Support disabling overviews check based on
+  flag in `CDB_Conf`
+
 0.18.8 (2018-06-25)
 
 * Support disabling all quota checks in

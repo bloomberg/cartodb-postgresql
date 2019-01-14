@@ -35,15 +35,28 @@ AS $$
   DECLARE
     schema_name TEXT;
     base_table_name TEXT;
+    disable_overviews BOOLEAN;
   BEGIN
-    SELECT * FROM _cdb_split_table_name(reloid) INTO schema_name, base_table_name;
-    RETURN QUERY SELECT
-      reloid AS base_table,
-      _CDB_OverviewTableZ(table_name) AS z,
-      table_regclass AS overview_table
-      FROM _CDB_UserTablesInSchema(schema_name)
-      WHERE _CDB_IsOverviewTableOf((SELECT relname FROM pg_class WHERE oid=reloid), table_name)
-      ORDER BY z;
+    SELECT COALESCE(value::text = 'true', false)
+    FROM cdb_conf WHERE key = 'disable_overviews'
+    INTO disable_overviews;
+
+    IF disable_overviews THEN
+      RETURN QUERY SELECT
+        NULL::regclass AS base_table,
+        NULL::integer AS z,
+        NULL::regclass AS overview_table
+      WHERE false;
+    ELSE
+      SELECT * FROM _cdb_split_table_name(reloid) INTO schema_name, base_table_name;
+      RETURN QUERY SELECT
+        reloid AS base_table,
+        _CDB_OverviewTableZ(table_name) AS z,
+        table_regclass AS overview_table
+        FROM _CDB_UserTablesInSchema(schema_name)
+        WHERE _CDB_IsOverviewTableOf((SELECT relname FROM pg_class WHERE oid=reloid), table_name)
+        ORDER BY z;
+    END IF;
   END
 $$ LANGUAGE PLPGSQL;
 
@@ -59,17 +72,33 @@ $$ LANGUAGE PLPGSQL;
 CREATE OR REPLACE FUNCTION CDB_Overviews(tables regclass[])
 RETURNS TABLE(base_table REGCLASS, z integer, overview_table REGCLASS)
 AS $$
-  SELECT
-    base_table::regclass AS base_table,
-    _CDB_OverviewTableZ(table_name) AS z,
-    table_regclass AS overview_table
-    FROM
-      _CDB_UserTablesInSchema(), unnest(tables) base_table
-    WHERE
-      schema_name = _cdb_schema_name(base_table)
-      AND _CDB_IsOverviewTableOf((SELECT relname FROM pg_class WHERE oid=base_table), table_name)
-    ORDER BY base_table, z;
-$$ LANGUAGE SQL;
+  DECLARE
+    disable_overviews BOOLEAN;
+  BEGIN
+    SELECT COALESCE(value::text = 'true', false)
+    FROM cdb_conf WHERE key = 'disable_overviews'
+    INTO disable_overviews;
+
+    IF disable_overviews THEN
+      RETURN QUERY SELECT
+        NULL::regclass AS base_table,
+        NULL::integer AS z,
+        NULL::regclass AS overview_table
+      WHERE false;
+    ELSE
+      RETURN QUERY SELECT
+        base_table_elem::regclass AS base_table,
+        _CDB_OverviewTableZ(table_name) AS z,
+        table_regclass AS overview_table
+        FROM
+          _CDB_UserTablesInSchema(), unnest(tables) base_table_elem
+        WHERE
+          schema_name = _cdb_schema_name(base_table_elem)
+          AND _CDB_IsOverviewTableOf((SELECT relname FROM pg_class WHERE oid=base_table_elem), table_name)
+        ORDER BY base_table_elem, z;
+    END IF;
+  END;
+$$ LANGUAGE PLPGSQL;
 
 -- Calculate the estimated extent of a cartodbfy'ed table.
 -- Scope: private.
