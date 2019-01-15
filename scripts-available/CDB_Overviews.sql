@@ -21,6 +21,17 @@ END;
 $$ LANGUAGE PLPGSQL VOLATILE;
 
 
+-- Return whether overviews are disabled by configuration.
+-- Access to CDB_Conf is wrapped by this function to enable
+-- execution by regular users.
+CREATE OR REPLACE FUNCTION _CDB_OverviewsDisabled()
+RETURNS BOOLEAN
+AS $$
+BEGIN
+  RETURN COALESCE(CDB_Conf_GetConf('disable_overviews')::text, 'false') = 'true';
+END;
+$$ LANGUAGE PLPGSQL STABLE SECURITY DEFINER;
+
 
 -- Return existing overviews (if any) for a given dataset table
 -- Scope: public
@@ -37,9 +48,7 @@ AS $$
     base_table_name TEXT;
     disable_overviews BOOLEAN;
   BEGIN
-    SELECT COALESCE(value::text = 'true', false)
-    FROM cdb_conf WHERE key = 'disable_overviews'
-    INTO disable_overviews;
+    disable_overviews := _CDB_OverviewsDisabled();
 
     IF disable_overviews THEN
       RETURN QUERY SELECT
@@ -75,9 +84,7 @@ AS $$
   DECLARE
     disable_overviews BOOLEAN;
   BEGIN
-    SELECT COALESCE(value::text = 'true', false)
-    FROM cdb_conf WHERE key = 'disable_overviews'
-    INTO disable_overviews;
+    disable_overviews := _CDB_OverviewsDisabled();
 
     IF disable_overviews THEN
       RETURN QUERY SELECT
