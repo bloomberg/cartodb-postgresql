@@ -21,7 +21,6 @@ AS $$
 DECLARE
   has_dependents boolean;
   dest_table regclass;
-
   column_list text;
 BEGIN
 
@@ -62,6 +61,13 @@ BEGIN
       );
     END IF;
 
+    -- Disable trigger for tracking updates to run manually
+    EXECUTE FORMAT(
+      'ALTER TABLE %I.%I DISABLE TRIGGER track_updates',
+      schema_name,
+      dest_table_name
+    );
+
     -- Truncate table
     EXECUTE FORMAT('TRUNCATE TABLE %I.%I', schema_name, dest_table_name);
 
@@ -87,6 +93,16 @@ BEGIN
         dest_table_name
       );
     END IF;
+
+    -- Manually record table updates
+    PERFORM public.CDB_TableMetadataTouch(dest_table);
+
+    -- Reenable trigger for tracking updates to after manual run
+    EXECUTE FORMAT(
+      'ALTER TABLE %I.%I ENABLE TRIGGER track_updates',
+      schema_name,
+      dest_table_name
+    );
 
     -- Drop source table
     EXECUTE FORMAT('DROP TABLE %I', source_table_name);

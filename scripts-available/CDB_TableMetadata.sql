@@ -120,29 +120,20 @@ BEGIN
   END IF;
 
   -- Cleanup stale entries
-  DELETE FROM public.CDB_TableMetadata
-   WHERE NOT EXISTS (
-    SELECT oid FROM pg_class WHERE oid = tabname
-  );
+  DELETE FROM cdb_tablemetadata m
+  USING (
+     SELECT tabname
+     FROM cdb_tablemetadata
+     WHERE NOT EXISTS (
+       SELECT oid FROM pg_class WHERE oid = tabname
+     )
+     ORDER BY tabname ASC
+     FOR UPDATE
+  ) d
+  WHERE d.tabname = m.tabname;
 
-  WITH nv as (
-    SELECT TG_RELID as tabname, NOW() as t
-  ), all_dependents as (
-    SELECT nv.tabname, nv.t
-    FROM nv
-    UNION
-    SELECT
-      dv.dependent_oid as tabname,
-      nv.t
-    FROM nv, public.CDB_TableMetadata_DependentViews(ARRAY[nv.tabname::regclass]) dv
-  ), updated as (
-    UPDATE public.CDB_TableMetadata x SET updated_at = ad.t
-    FROM all_dependents ad WHERE x.tabname = ad.tabname
-    RETURNING x.tabname
-  )
-  INSERT INTO public.CDB_TableMetadata SELECT ad.*
-  FROM all_dependents ad LEFT JOIN updated USING(tabname)
-  WHERE updated.tabname IS NULL;
+  -- Update metadata for table
+  PERFORM public.CDB_TableMetadataTouch(TG_RELID::regclass);
 
   RETURN NULL;
 END;
@@ -223,15 +214,39 @@ CREATE OR REPLACE FUNCTION public.CDB_TableMetadataTouch(tablename regclass)
     RETURNS void AS
     $$
     BEGIN
-        WITH upsert AS (
-            UPDATE public.cdb_tablemetadata
-            SET updated_at = NOW()
-            WHERE tabname = tablename
-            RETURNING *
+        WITH nv as (
+          SELECT tablename as tabname, NOW() as t
+        ), all_dependents as (
+          SELECT nv.tabname, nv.t
+          FROM nv
+          UNION
+          SELECT
+            dv.dependent_oid as tabname,
+            nv.t
+          FROM nv, public.CDB_TableMetadata_DependentViews(ARRAY[nv.tabname::regclass]) dv
+        ), updated as (
+          UPDATE public.CDB_TableMetadata x SET updated_at = ad.t
+          FROM (
+            SELECT
+              md.tabname,
+              ad.t
+            FROM public.CDB_TableMetadata md
+            JOIN all_dependents ad
+              ON ad.tabname = md.tabname
+            ORDER BY md.tabname ASC
+            FOR UPDATE OF md
+          ) ad
+          WHERE x.tabname = ad.tabname
+          RETURNING x.tabname
         )
-        INSERT INTO public.cdb_tablemetadata (tabname, updated_at)
-            SELECT tablename, NOW()
-            WHERE NOT EXISTS (SELECT * FROM upsert);
+        INSERT INTO public.CDB_TableMetadata SELECT ad.*
+        FROM all_dependents ad
+        LEFT JOIN updated u
+          ON u.tabname = ad.tabname
+        LEFT JOIN public.CDB_TableMetadata i
+          ON i.tabname = ad.tabname
+        WHERE u.tabname IS NULL
+          AND i.tabname IS NULL;
     END;
     $$
 LANGUAGE 'plpgsql' VOLATILE STRICT;
