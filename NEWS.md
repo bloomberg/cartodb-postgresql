@@ -1,3 +1,7 @@
+0.18.10 (2019-01-23)
+
+* Support parallel `CDB_TableMetadata` trigger updates
+
 0.18.9 (2019-01-14)
 
 * Support disabling overviews check based on
