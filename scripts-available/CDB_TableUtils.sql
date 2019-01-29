@@ -10,10 +10,10 @@
 --
 DROP FUNCTION IF EXISTS public.CDB_TableUtils_ReplaceTableContents(text,text,text,text,boolean);
 CREATE OR REPLACE FUNCTION public.CDB_TableUtils_ReplaceTableContents(
-  schema_name text,             -- name of destination schema
-  dest_table_name text,         -- name of existing
-  source_table_name text,       -- fully qualified source table
-  swap_table_name text,         -- temporary table to use for swapping
+  schema_name text,             -- name of schema for all tables
+  dest_table_name text,         -- name of table containing current data
+  source_table_name text,       -- name of table containing replacement data
+  swap_table_name text,         -- name of temporary table to use for swapping
   disable_quota_checks boolean  -- Disable quota check
 )
 RETURNS void
@@ -75,8 +75,8 @@ BEGIN
     EXECUTE FORMAT($q$
       INSERT INTO %I.%I ( %s )
         SELECT %s
-        FROM %I
-    $q$, schema_name, dest_table_name, column_list, column_list, source_table_name);
+        FROM %I.%I
+    $q$, schema_name, dest_table_name, column_list, column_list, schema_name, source_table_name);
 
     IF disable_quota_checks
     THEN
@@ -105,7 +105,7 @@ BEGIN
     );
 
     -- Drop source table
-    EXECUTE FORMAT('DROP TABLE %I', source_table_name);
+    EXECUTE FORMAT('DROP TABLE %I.%I', schema_name, source_table_name);
   ELSE
     -- The table is safe to replace with the source
     EXECUTE FORMAT($q$

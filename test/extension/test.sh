@@ -1038,6 +1038,101 @@ function test_cdb_catalog_basic_node() {
     sql postgres "DELETE FROM cartodb.cdb_analysis_catalog"
 }
 
+function test_cdb_tableutils_replacetablecontents_dropreplace() {
+
+    # Setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.CDB_SetUserQuotaInBytes('cdb_testmember_1', 1000000000);"
+
+    # Create a cartodbfied table with some data
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_a (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_a'::regclass);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_a (id) VALUES (1),(2),(3);"
+
+    # Create a table with which this table's data will be replaced
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_b (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_b'::regclass);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_b (id) VALUES (4),(5),(6);"
+
+    # Ensure initial table contents are as expected
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_a" should "1|2|3"
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_b" should "4|5|6"
+
+    # Replace contents
+    sql postgres "SELECT cartodb.CDB_TableUtils_ReplaceTableContents(
+      schema_name => 'cdb_testmember_1',
+      dest_table_name => 'some_table_a',
+      source_table_name => 'some_table_b',
+      swap_table_name => 'some_table_swap',
+      disable_quota_checks => false
+    );"
+
+    # Table a should contain contents of table_b
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_a" should "4|5|6"
+
+    # Dropped table should not exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.some_table_b') IS NULL" should "t"
+
+    # Swap table should not exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.some_table_swap') IS NULL" should "t"
+
+    # Cleanup
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_a;"
+
+}
+
+function test_cdb_tableutils_replacetablecontents_truncateinsert() {
+
+    # Setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.CDB_SetUserQuotaInBytes('cdb_testmember_1', 1000000000);"
+
+    # Create a cartodbfied table with some data
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_a (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_a'::regclass);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_a (id) VALUES (1),(2),(3);"
+
+    # Create a table with which this table's data will be replaced
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_b (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_b'::regclass);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_b (id) VALUES (4),(5),(6);"
+
+    # Create dependent views on some_table_a
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_a AS
+            SELECT * FROM cdb_testmember_1.some_table_a;"
+
+    # Ensure initial table contents are as expected
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_a" should "1|2|3"
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_b" should "4|5|6"
+
+    # Replace contents
+    sql postgres "SELECT cartodb.CDB_TableUtils_ReplaceTableContents(
+      schema_name => 'cdb_testmember_1',
+      dest_table_name => 'some_table_a',
+      source_table_name => 'some_table_b',
+      swap_table_name => 'some_table_swap',
+      disable_quota_checks => false
+    );"
+
+    # Table a should contain contents of table_b
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_a" should "4|5|6"
+
+    # Dropped table should not exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.some_table_b') IS NULL" should "t"
+
+    # Swap table should not exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.some_table_swap') IS NULL" should "t"
+
+    # View should still exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.direct_dep_view_a') IS NULL" should "f"
+
+    # Cleanup
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_a;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_a;"
+}
+
 #################################################### TESTS END HERE ####################################################
 
 run_tests $@
