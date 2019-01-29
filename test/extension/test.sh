@@ -384,6 +384,253 @@ function test_cdb_tablemetadatatouch_fully_qualifies_names() {
     sql postgres 'DROP TABLE touch_invalidations'
 }
 
+function test_cdb_tablemetadata_trigger_insert() {
+
+    #setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.cdb_setuserquotainbytes('cdb_testmember_1', 1000000000);"
+    #create cartodbified tables
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_ins (id int);"
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_upd (id int);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_upd (id) VALUES (1);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_ins'::regclass);"
+    sql cdb_testmember_1 "SELECT cartodb.cdb_cartodbfytable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_upd'::regclass);"
+
+    # cdb_tablemetadata_text should be empty
+    sql postgres "SELECT * FROM cdb_tablemetadata_text" should ""
+
+    # perform an update on some_table_upd - cdb_tablemetadata_text record should be inserted
+    sql cdb_testmember_1 "UPDATE cdb_testmember_1.some_table_upd SET id = 2;"
+    sql postgres "SELECT tabname FROM cdb_tablemetadata_text" should "cdb_testmember_1.some_table_upd"
+
+    # perform an insert on some_table_ins - cdb_tablemetadata_text record should be inserted
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_ins (id) VALUES (3);"
+    sql postgres "
+        SELECT
+            string_agg(tabname, '|' ORDER BY tabname)
+        FROM cdb_tablemetadata_text
+    " should "cdb_testmember_1.some_table_ins|cdb_testmember_1.some_table_upd"
+
+    #cleanup
+    sql postgres "DELETE FROM cdb_tablemetadata;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_ins;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_upd;"
+
+}
+
+function test_cdb_tablemetadata_trigger_update() {
+
+    #setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.cdb_setuserquotainbytes('cdb_testmember_1', 1000000000);"
+    #create cartodbified tables
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_ins (id int);"
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_upd (id int);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_upd (id) VALUES (1);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_ins'::regclass);"
+    sql cdb_testmember_1 "SELECT cartodb.cdb_cartodbfytable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_upd'::regclass);"
+
+    # cdb_tablemetadata_text should be empty
+    sql postgres "SELECT * FROM cdb_tablemetadata_text" should ""
+
+    # perform update/insert to create cdb_tablemetadata_text records for both tables
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_ins (id) VALUES (3);"
+    sql cdb_testmember_1 "UPDATE cdb_testmember_1.some_table_upd SET id = 2;"
+
+    # store current timestamp - subsequent updates should have later timestamps
+    sql postgres "CREATE TABLE timestamp_test (ts timestamptz);"
+    sql postgres "INSERT INTO timestamp_test (ts) SELECT now();"
+
+    # check for updated timestamps preceding stored timestamp in cdb_tablemetadata
+    sql postgres "
+        SELECT
+            string_agg(tabname, '|' ORDER BY tabname)
+        FROM cdb_tablemetadata_text
+        WHERE updated_at < (SELECT ts FROM timestamp_test)
+    " should "cdb_testmember_1.some_table_ins|cdb_testmember_1.some_table_upd"
+
+    # perform additional updates
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_ins (id) VALUES (4);"
+    sql cdb_testmember_1 "UPDATE cdb_testmember_1.some_table_upd SET id = 6;"
+
+    # check for updated timestamps following stored timestamp in cdb_tablemetadata
+    sql postgres "
+        SELECT
+            string_agg(tabname, '|' ORDER BY tabname)
+        FROM cdb_tablemetadata_text
+        WHERE updated_at > (SELECT ts FROM timestamp_test)
+    " should "cdb_testmember_1.some_table_ins|cdb_testmember_1.some_table_upd"
+
+    #cleanup
+    sql postgres "DELETE FROM cdb_tablemetadata;"
+    sql postgres "DROP TABLE timestamp_test;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_ins;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_upd;"
+
+}
+
+function test_cdb_tablemetadata_trigger_delete() {
+
+    #setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.cdb_setuserquotainbytes('cdb_testmember_1', 1000000000);"
+    #create cartodbified tables
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_ins (id int);"
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_to_be_deleted (id int);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_to_be_deleted (id) VALUES (1);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_ins'::regclass);"
+    sql cdb_testmember_1 "SELECT cartodb.cdb_cartodbfytable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_to_be_deleted'::regclass);"
+
+    # cdb_tablemetadata_text should be empty
+    sql postgres "SELECT * FROM cdb_tablemetadata_text" should ""
+
+    # perform update/insert to create cdb_tablemetadata_text records for both tables
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_ins (id) VALUES (3);"
+    sql cdb_testmember_1 "UPDATE cdb_testmember_1.some_table_to_be_deleted SET id = 2;"
+    sql postgres "
+        SELECT
+            string_agg(tabname, '|' ORDER BY tabname)
+        FROM cdb_tablemetadata_text
+    " should "cdb_testmember_1.some_table_ins|cdb_testmember_1.some_table_to_be_deleted"
+
+    # drop table - cdb_tablemetadata should still a have record
+    # whereas cdb_tablemetadata_text will not have a record, as
+    # the records are stored as regclass in cdb_tablemetadata
+    # and cdb_tablemetadata_text joins against postgres system
+    # tables to find the name for the regclass, thus filtering
+    # out dropped tables.
+
+    # backup oid of table to delete
+    sql postgres "CREATE TABLE oid_backup (id int NOT NULL);"
+    sql postgres "INSERT INTO oid_backup (id) SELECT 'cdb_testmember_1.some_table_to_be_deleted'::regclass::oid::int;"
+    # log table contents
+    sql postgres "SELECT * FROM oid_backup"
+    sql postgres "SELECT *, tabname::int FROM cdb_tablemetadata"
+    sql postgres "SELECT COUNT(1) FROM oid_backup" should "1"
+
+    # drop table - cdb_tablemetadata has the record but cdb_tablemetadata_text does not
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_to_be_deleted;"
+    # log table contents
+    sql postgres "SELECT *, tabname::int FROM cdb_tablemetadata"
+    sql postgres "SELECT COUNT(1) FROM oid_backup b JOIN cdb_tablemetadata t ON t.tabname = b.id" should "1"
+    sql postgres "SELECT tabname FROM cdb_tablemetadata_text" should "cdb_testmember_1.some_table_ins"
+
+    # update remaining table - neither table should have a record for the dropped table
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_ins (id) VALUES (4);"
+    # log table contents
+    sql postgres "SELECT *, tabname::int FROM cdb_tablemetadata"
+    sql postgres "SELECT COUNT(1) FROM oid_backup b JOIN cdb_tablemetadata t ON t.tabname = b.id" should "0"
+    sql postgres "SELECT tabname FROM cdb_tablemetadata_text" should "cdb_testmember_1.some_table_ins"
+
+    #cleanup
+    sql postgres "DELETE FROM cdb_tablemetadata;"
+    sql postgres "DROP TABLE oid_backup;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_ins;"
+
+}
+
+function test_cdb_tablemetadatatouch_dependent_views() {
+
+    #setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.CDB_SetUserQuotaInBytes('cdb_testmember_1', 1000000000);"
+    #create cartodbified tables and some views which
+    #depend on them
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_a (id int);"
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_b (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_a'::regclass);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_b'::regclass);"
+
+
+    #dependents of some_table_a
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_a AS
+            SELECT * FROM cdb_testmember_1.some_table_a;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_a AS
+            SELECT * FROM cdb_testmember_1.direct_dep_view_a;"
+
+    #dependents of some_table_b
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_b AS
+            SELECT * FROM cdb_testmember_1.some_table_b;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_b AS
+            SELECT * FROM cdb_testmember_1.direct_dep_view_b;"
+
+    #dependents of both tables
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_both AS
+            SELECT a.* FROM cdb_testmember_1.some_table_a a
+            JOIN cdb_testmember_1.some_table_b b on b.id = a.id;"
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.indirect_dep_view_both AS
+            SELECT a.* FROM cdb_testmember_1.indirect_dep_view_a a
+            JOIN cdb_testmember_1.indirect_dep_view_b b on b.id = a.id;"
+
+
+    #clean up old touches
+    sql postgres "DELETE FROM cdb_tablemetadata;"
+    sql postgres "SELECT COUNT(1) FROM cdb_tablemetadata_text;" should "0"
+
+    #touch table a
+    sql postgres "SELECT cartodb.CDB_TableMetadataTouch('cdb_testmember_1.some_table_a'::regclass);"
+
+    #ensure dependents have exactly the same updated timestamps as base table
+    sql postgres "SELECT v.* FROM cartodb.cdb_tablemetadata_text v
+                  LEFT JOIN cartodb.cdb_tablemetadata_text t
+                      ON t.tabname = 'cdb_testmember_1.some_table_a'
+                  WHERE v.tabname IN('cdb_testmember_1.indirect_dep_view_both',
+                                     'cdb_testmember_1.direct_dep_view_both',
+                                     'cdb_testmember_1.indirect_dep_view_a',
+                                     'cdb_testmember_1.direct_dep_view_a')
+                    -- timestamps are not equal
+                    AND ((t.updated_at IS NOT NULL AND v.updated_at IS NULL)
+                      OR (v.updated_at IS NOT NULL AND t.updated_at IS NULL)
+                      OR (v.updated_at <> t.updated_at));" should ""
+
+    #touch table b
+    sql postgres "SELECT cartodb.CDB_TableMetadataTouch('cdb_testmember_1.some_table_b'::regclass);"
+
+    #ensure dependents have exactly the same updated timestamps as base table
+    sql postgres "SELECT v.* FROM cartodb.cdb_tablemetadata_text v
+                  LEFT JOIN cartodb.cdb_tablemetadata_text t
+                      ON t.tabname = 'cdb_testmember_1.some_table_b'
+                  WHERE v.tabname IN('cdb_testmember_1.indirect_dep_view_both',
+                                     'cdb_testmember_1.direct_dep_view_both',
+                                     'cdb_testmember_1.indirect_dep_view_b',
+                                     'cdb_testmember_1.direct_dep_view_b')
+                    -- timestamps are not equal
+                    AND ((t.updated_at IS NOT NULL AND v.updated_at IS NULL)
+                      OR (v.updated_at IS NOT NULL AND t.updated_at IS NULL)
+                      OR (v.updated_at <> t.updated_at));" should ""
+
+    #ensure views and tables exist in cdb_tablemetadata_text
+    sql postgres "SELECT COUNT(DISTINCT tabname) FROM cdb_tablemetadata_text
+                  WHERE tabname IN('cdb_testmember_1.indirect_dep_view_both',
+                                   'cdb_testmember_1.direct_dep_view_both',
+                                   'cdb_testmember_1.indirect_dep_view_b',
+                                   'cdb_testmember_1.direct_dep_view_b',
+                                   'cdb_testmember_1.indirect_dep_view_a',
+                                   'cdb_testmember_1.direct_dep_view_a',
+                                   'cdb_testmember_1.some_table_a',
+                                   'cdb_testmember_1.some_table_b');" should "8"
+
+    #ensure views and tables have exactly one record
+    sql postgres "SELECT COUNT(1) FROM (SELECT 1 FROM cdb_tablemetadata_text
+                  GROUP BY tabname HAVING COUNT(1) > 1) s;" should "0"
+
+    #cleanup
+    sql postgres "DELETE FROM cdb_tablemetadata;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_both;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_both;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_b;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_b;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.indirect_dep_view_a;"
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_a;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_b;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_a;"
+
+}
+
 function test_cdb_tablemetadata_trigger_dependent_views() {
 
     #setup user quota
@@ -789,6 +1036,101 @@ function test_cdb_catalog_basic_node() {
     sql postgres "INSERT INTO cartodb.cdb_analysis_catalog (node_id, analysis_def) VALUES ('1bbc4c41ea7c9d3a7dc1509727f698b7', ${DEF}::json)"
     sql postgres "SELECT status from cartodb.cdb_analysis_catalog where node_id = '1bbc4c41ea7c9d3a7dc1509727f698b7'" should 'pending'
     sql postgres "DELETE FROM cartodb.cdb_analysis_catalog"
+}
+
+function test_cdb_tableutils_replacetablecontents_dropreplace() {
+
+    # Setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.CDB_SetUserQuotaInBytes('cdb_testmember_1', 1000000000);"
+
+    # Create a cartodbfied table with some data
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_a (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_a'::regclass);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_a (id) VALUES (1),(2),(3);"
+
+    # Create a table with which this table's data will be replaced
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_b (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_b'::regclass);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_b (id) VALUES (4),(5),(6);"
+
+    # Ensure initial table contents are as expected
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_a" should "1|2|3"
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_b" should "4|5|6"
+
+    # Replace contents
+    sql postgres "SELECT cartodb.CDB_TableUtils_ReplaceTableContents(
+      schema_name => 'cdb_testmember_1',
+      dest_table_name => 'some_table_a',
+      source_table_name => 'some_table_b',
+      swap_table_name => 'some_table_swap',
+      disable_quota_checks => false
+    );"
+
+    # Table a should contain contents of table_b
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_a" should "4|5|6"
+
+    # Dropped table should not exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.some_table_b') IS NULL" should "t"
+
+    # Swap table should not exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.some_table_swap') IS NULL" should "t"
+
+    # Cleanup
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_a;"
+
+}
+
+function test_cdb_tableutils_replacetablecontents_truncateinsert() {
+
+    # Setup user quota
+    sql cdb_testmember_1 "SELECT cartodb.CDB_SetUserQuotaInBytes('cdb_testmember_1', 1000000000);"
+
+    # Create a cartodbfied table with some data
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_a (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_a'::regclass);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_a (id) VALUES (1),(2),(3);"
+
+    # Create a table with which this table's data will be replaced
+    sql cdb_testmember_1 "CREATE TABLE cdb_testmember_1.some_table_b (id int);"
+    sql cdb_testmember_1 "SELECT cartodb.CDB_CartodbfyTable('cdb_testmember_1'::text,
+            'cdb_testmember_1.some_table_b'::regclass);"
+    sql cdb_testmember_1 "INSERT INTO cdb_testmember_1.some_table_b (id) VALUES (4),(5),(6);"
+
+    # Create dependent views on some_table_a
+    sql cdb_testmember_1 "CREATE VIEW cdb_testmember_1.direct_dep_view_a AS
+            SELECT * FROM cdb_testmember_1.some_table_a;"
+
+    # Ensure initial table contents are as expected
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_a" should "1|2|3"
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_b" should "4|5|6"
+
+    # Replace contents
+    sql postgres "SELECT cartodb.CDB_TableUtils_ReplaceTableContents(
+      schema_name => 'cdb_testmember_1',
+      dest_table_name => 'some_table_a',
+      source_table_name => 'some_table_b',
+      swap_table_name => 'some_table_swap',
+      disable_quota_checks => false
+    );"
+
+    # Table a should contain contents of table_b
+    sql cdb_testmember_1 "SELECT string_agg(id::text, '|' ORDER BY id) FROM cdb_testmember_1.some_table_a" should "4|5|6"
+
+    # Dropped table should not exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.some_table_b') IS NULL" should "t"
+
+    # Swap table should not exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.some_table_swap') IS NULL" should "t"
+
+    # View should still exist
+    sql postgres "SELECT to_regclass('cdb_testmember_1.direct_dep_view_a') IS NULL" should "f"
+
+    # Cleanup
+    sql cdb_testmember_1 "DROP VIEW cdb_testmember_1.direct_dep_view_a;"
+    sql cdb_testmember_1 "DROP TABLE cdb_testmember_1.some_table_a;"
 }
 
 #################################################### TESTS END HERE ####################################################
